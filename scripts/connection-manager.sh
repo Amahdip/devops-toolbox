@@ -10,6 +10,12 @@
 
 set -euo pipefail
 
+TTY_IN="/dev/tty"
+if [[ ! -r "$TTY_IN" ]]; then
+  echo "[x] No TTY available for interactive input. Run without piping, or add non-interactive flags." >&2
+  exit 1
+fi
+
 # --- STYLING ---
 RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
 BLUE='\033[0;34m'; CYAN='\033[0;36m'; NC='\033[0m'
@@ -194,12 +200,12 @@ manage_configs() {
   echo "  3) Paste full V2Ray/Xray JSON config"
   echo ""
 
-  read -r -p "Select [1-3]: " mode
+  read -r -p "Select [1-3]: " mode < "$TTY_IN"
   mode="${mode:-1}"
 
   case "$mode" in
     1)
-      read -r -p "Paste Subscription URL: " SUB_URL
+      read -r -p "Paste Subscription URL: " SUB_URL < "$TTY_IN"
       [[ -z "${SUB_URL:-}" ]] && die "Empty subscription URL."
 
       echo -e "${CYAN}Downloading subscription...${NC}"
@@ -212,7 +218,7 @@ manage_configs() {
       fi
       ;;
     2)
-      read -r -p "Paste share link: " SINGLE_LINK
+      read -r -p "Paste share link: " SINGLE_LINK < "$TTY_IN"
       [[ -z "${SINGLE_LINK:-}" ]] && die "Empty link."
       printf "%s\n" "$SINGLE_LINK" > "$WORK_DIR/raw_configs.txt"
       ;;
