@@ -13,6 +13,25 @@ if [ "$EUID" -ne 0 ]; then
   fi
 fi
 
+
+# --- 1.5 SECURITY AUDIT: Check Open Ports & Sensitive Files ---
+echo "Auditing open ports..."
+# netstat or ss shows what services are currently listening
+if command -v ss &> /dev/null; then
+    sudo ss -tulpn | grep LISTEN
+else
+    sudo netstat -tulpn | grep LISTEN
+fi
+
+echo "Checking for sensitive exposed directories..."
+# Checking for common DevOps leaks like .git or .env files
+SENSITIVE_DIRS=(".git" ".env" ".aws" ".ssh")
+for dir in "${SENSITIVE_DIRS[@]}"; do
+    if [ -d "$HOME/$dir" ] || [ -f "$HOME/$dir" ]; then
+        echo "WARNING: Sensitive item found: $HOME/$dir - Ensure this is not publicly accessible!"
+    fi
+done
+
 # --- 2. PREPARATION: Update System and Install Essentials ---
 # Standard procedure for a fresh server or maintenance.
 echo "Updating system and installing essential tools..."
