@@ -1,6 +1,6 @@
 #!/bin/bash
 # ==============================================================================
-# Script: connection-manager.sh (v2.0 - National-Ready)
+# Script: connection-manager.sh (v2.1 - Robust Edition)
 # Description: Network Audit, Auto-Dependency, Parallel Ping & Xray Runner
 # ==============================================================================
 
@@ -12,10 +12,9 @@ WORK_DIR=$(mktemp -d)
 trap 'rm -rf "$WORK_DIR"; echo -e "\n${GREEN}[✓] Temp files cleaned.${NC}"' EXIT
 
 # --- 1. DEPENDENCY & XRAY INSTALLER ---
-# This ensures even if GitHub is filtered later, you have the binaries NOW.
 prepare_system() {
     echo -e "${BLUE}=== [1/4] Preparing System ===${NC}"
-    local deps=("fzf" "curl" "jq" "base64" "column")
+    local deps=("fzf" "curl" "jq" "base64" "column" "python3")
     for tool in "${deps[@]}"; do
         if ! command -v "$tool" &> /dev/null; then
             echo -e "${YELLOW}[!] Installing $tool...${NC}"
@@ -33,14 +32,9 @@ prepare_system() {
 # --- 2. NETWORK AUDIT ---
 run_audit() {
     echo -e "${BLUE}=== [2/4] Network Audit ===${NC}"
-    # DNS Check
     DNS=$(grep "nameserver" /etc/resolv.conf | awk '{print $2}' | head -n 1)
     host google.com &>/dev/null && echo -e "DNS ($DNS): ${GREEN}WORKING${NC}" || echo -e "DNS: ${RED}FAILED${NC}"
-    
-    # Intranet vs Internet
     ping -c 1 -W 2 8.8.8.8 &>/dev/null && echo -e "Global WAN: ${GREEN}ONLINE${NC}" || echo -e "Global WAN: ${RED}OFFLINE (Melli)${NC}"
-    
-    # Sanction Check
     local code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 3 https://hub.docker.com)
     [[ "$code" == "403" ]] && echo -e "Docker Hub: ${RED}SANCTIONED (403)${NC}" || echo -e "Docker Hub: ${GREEN}OK ($code)${NC}"
     echo ""
@@ -52,8 +46,16 @@ manage_configs() {
     read -p "Paste Subscription URL: " SUB_URL
     [[ -z "$SUB_URL" ]] && exit 1
 
-    local raw_data=$(curl -sL --max-time 10 "$SUB_URL" | base64 -d 2>/dev/null)
-    [[ -z "$raw_data" ]] && { echo -e "${RED}Error: Link invalid or network blocked.${NC}"; exit 1; }
+    echo -e "${CYAN}Downloading subscription...${NC}"
+    # Use User-Agent to avoid being blocked
+    local raw_base64=$(curl -sL -A "Mozilla/5.0" --max-time 15 "$SUB_URL" | tr -d '\r\n% ')
+    
+    # Try decoding using multiple methods
+    if ! echo "$raw_base64" | base64 -d 2>/dev/null > "$WORK_DIR/raw_configs.txt"; then
+        python3 -c "import base64; import sys; print(base64.b64decode(sys.stdin.read() + '===').decode('utf-8', 'ignore'))" <<< "$raw_base64" > "$WORK_DIR/raw_configs.txt" 2>/dev/null
+    fi
+
+    [[ ! -s "$WORK_DIR/raw_configs.txt" ]] && { echo -e "${RED}Error: Decoding failed or link empty.${NC}"; exit 1; }
 
     echo -e "${CYAN}Testing latencies in parallel...${NC}"
     > "$WORK_DIR/results.txt"
@@ -61,9 +63,8 @@ manage_configs() {
     while read -r line; do
         [[ -z "$line" ]] && continue
         (
-            # Simple extraction for VLESS
             local ip=$(echo "$line" | grep -oP '@\K[^:]+(?=:)')
-            local name=$(echo "$line" | grep -oP '#\K.*' | sed 's/+/ /g;s/%\([0-9A-F][0-9A-F]\)/\\x\1/g;s/\\x/%\x/g' | xargs -0 printf "%b" 2>/dev/null)
+            local name=$(echo "$line" | grep -oP '#\K.*' | sed 's/+/ /g;s/%\([0-9A-F][0-9A-F]\)/\\x\1/g' | xargs -0 printf "%b" 2>/dev/null)
             [[ -z "$name" ]] && name="Unnamed_Node"
             
             if [ -n "$ip" ]; then
@@ -72,17 +73,14 @@ manage_configs() {
                 echo "$lat|$ip|$name|$line" >> "$WORK_DIR/results.txt"
             fi
         ) &
-    done <<< "$raw_data"
+    done < "$WORK_DIR/raw_configs.txt"
     wait
 
-    # Sort and Display with FZF
     echo "LATENCY|IP|NAME|LINK" > "$WORK_DIR/table.txt"
-    sort -n -t '|' -k 1 "$WORK_DIR/ping_results.txt" 2>/dev/null | awk -F'|' '{printf "%s ms|%s|%s|%s\n", $1, $2, $3, $4}' >> "$WORK_DIR/table.txt"
+    sort -n -t '|' -k 1 "$WORK_DIR/results.txt" | awk -F'|' '{printf "%s ms|%s|%s|%s\n", $1, $2, $3, $4}' >> "$WORK_DIR/table.txt"
 
-    SELECTED=$(column -t -s '|' "$WORK_DIR/table.txt" | fzf --header="Select the best node (Sorted by Ping)" --with-nth=1,2,3 --layout=reverse)
+    SELECTED=$(column -t -s '|' "$WORK_DIR/table.txt" | fzf --header="Select Node (Sorted by Latency)" --with-nth=1,2,3 --layout=reverse)
 }
-
-
 
 # --- 4. CONVERT TO JSON & START ---
 start_connection() {
@@ -91,28 +89,55 @@ start_connection() {
     
     echo -e "${BLUE}=== [4/4] Activating Connection ===${NC}"
     
-    # Extraction for JSON
+    # Advanced extraction for VLESS (WS or Reality)
     local uuid=$(echo "$link" | grep -oP 'vless://\K[^@]+')
     local remote=$(echo "$link" | grep -oP '@\K[^:]+')
     local port=$(echo "$link" | grep -oP ':[0-9]+' | head -n 1 | tr -d ':')
     local sni=$(echo "$link" | grep -oP 'sni=\K[^&]+')
-    local path=$(echo "$link" | grep -oP 'path=\K[^&]+' | sed 's/%2F/\//g')
+    local security=$(echo "$link" | grep -oP 'security=\K[^&]+')
+    local type=$(echo "$link" | grep -oP 'type=\K[^&]+')
 
-    # Minimal Xray Config
+    # Build Xray Outbound
+    local outbound_json
+    if [[ "$security" == "reality" ]]; then
+        local pbk=$(echo "$link" | grep -oP 'pbk=\K[^&]+')
+        local sid=$(echo "$link" | grep -oP 'sid=\K[^&]+')
+        local fp=$(echo "$link" | grep -oP 'fp=\K[^&]+')
+        outbound_json=$(cat <<EOF
+        {
+            "protocol": "vless",
+            "settings": {"vnext": [{"address": "$remote", "port": $port, "users": [{"id": "$uuid", "encryption": "none", "flow": "xtls-rprx-vision"}]}]},
+            "streamSettings": {
+                "network": "$type", "security": "reality",
+                "realitySettings": {"show": false, "fingerprint": "$fp", "serverName": "$sni", "publicKey": "$pbk", "shortId": "$sid"}
+            }
+        }
+EOF
+)
+    else
+        local path=$(echo "$link" | grep -oP 'path=\K[^&]+' | sed 's/%2F/\//g')
+        outbound_json=$(cat <<EOF
+        {
+            "protocol": "vless",
+            "settings": {"vnext": [{"address": "$remote", "port": $port, "users": [{"id": "$uuid", "encryption": "none"}]}]},
+            "streamSettings": {"network": "ws", "security": "tls", "tlsSettings": {"serverName": "$sni"}, "wsSettings": {"path": "$path"}}
+        }
+EOF
+)
+    fi
+
+    # Write Config
     cat <<EOF > /usr/local/etc/xray/config.json
 {
+    "log": {"loglevel": "warning"},
     "inbounds": [{"port": 10808, "protocol": "socks", "settings": {"auth": "noauth"}}],
-    "outbounds": [{
-        "protocol": "vless",
-        "settings": {"vnext": [{"address": "$remote", "port": $port, "users": [{"id": "$uuid", "encryption": "none"}]}]},
-        "streamSettings": {"network": "ws", "security": "tls", "tlsSettings": {"serverName": "$sni"}, "wsSettings": {"path": "$path"}}
-    }]
+    "outbounds": [$outbound_json]
 }
 EOF
 
     systemctl restart xray
-    echo -e "${GREEN}[✓] Xray is running on SOCKS5 port 10808${NC}"
-    echo -e "${YELLOW}Test it with: curl --proxy socks5h://127.0.0.1:10808 https://google.com${NC}"
+    echo -e "${GREEN}[✓] Xray is active on SOCKS5 port 10808${NC}"
+    echo -e "${YELLOW}Test: curl --proxy socks5h://127.0.0.1:10808 https://google.com${NC}"
 }
 
 # --- EXECUTION ---
