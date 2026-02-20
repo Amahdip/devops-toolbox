@@ -40,47 +40,46 @@ run_audit() {
     echo ""
 }
 
-# --- 3. FETCH & PARALLEL PING ---
+# --- 3. FETCH & PARALLEL PING (Anti-Fragile Version) ---
 manage_configs() {
     echo -e "${BLUE}=== [3/4] Fetching & Benchmarking ===${NC}"
     read -p "Paste Subscription URL: " SUB_URL
     [[ -z "$SUB_URL" ]] && exit 1
 
-    echo -e "${CYAN}Downloading subscription...${NC}"
-    # Use User-Agent to avoid being blocked
-    local raw_base64=$(curl -sL -A "Mozilla/5.0" --max-time 15 "$SUB_URL" | tr -d '\r\n% ')
+    echo -e "${CYAN}Downloading and sanitizing subscription...${NC}"
     
-    # Try decoding using multiple methods
-    if ! echo "$raw_base64" | base64 -d 2>/dev/null > "$WORK_DIR/raw_configs.txt"; then
-        python3 -c "import base64; import sys; print(base64.b64decode(sys.stdin.read() + '===').decode('utf-8', 'ignore'))" <<< "$raw_base64" > "$WORK_DIR/raw_configs.txt" 2>/dev/null
+    # دانلود مستقیم و ذخیره در یک فایل موقت
+    curl -sL -A "Mozilla/5.0" --max-time 15 "$SUB_URL" > "$WORK_DIR/downloaded.tmp"
+
+    # استفاده از پایتون برای دیکود کردن هوشمند (حتی با وجود کاراکترهای کثیف)
+    python3 <<EOF > "$WORK_DIR/raw_configs.txt" 2>/dev/null
+import base64
+try:
+    with open("$WORK_DIR/downloaded.tmp", "r") as f:
+        content = f.read().strip().replace(" ", "").replace("\n", "").replace("\r", "")
+        # پاکسازی کاراکترهای غیر Base64 مثل % در انتها
+        import re
+        content = re.sub(r'[^a-zA-Z0-9+/=]', '', content)
+        # اضافه کردن Padding اگر لازم باشد
+        missing_padding = len(content) % 4
+        if missing_padding:
+            content += '=' * (4 - missing_padding)
+        decoded = base64.b64decode(content).decode('utf-8', 'ignore')
+        print(decoded)
+except Exception as e:
+    pass
+EOF
+
+    if [[ ! -s "$WORK_DIR/raw_configs.txt" ]]; then
+        echo -e "${RED}Error: Critical decoding failure.${NC}"
+        echo -e "${YELLOW}Please check if the URL content is valid Base64.${NC}"
+        exit 1
     fi
 
-    [[ ! -s "$WORK_DIR/raw_configs.txt" ]] && { echo -e "${RED}Error: Decoding failed or link empty.${NC}"; exit 1; }
-
+    # ادامه اسکریپت (بخش پینگ و جدول) ...
     echo -e "${CYAN}Testing latencies in parallel...${NC}"
-    > "$WORK_DIR/results.txt"
+    # ... بقیه کدهای قبلی ...
 
-    while read -r line; do
-        [[ -z "$line" ]] && continue
-        (
-            local ip=$(echo "$line" | grep -oP '@\K[^:]+(?=:)')
-            local name=$(echo "$line" | grep -oP '#\K.*' | sed 's/+/ /g;s/%\([0-9A-F][0-9A-F]\)/\\x\1/g' | xargs -0 printf "%b" 2>/dev/null)
-            [[ -z "$name" ]] && name="Unnamed_Node"
-            
-            if [ -n "$ip" ]; then
-                local lat=$(ping -c 1 -W 1 "$ip" 2>/dev/null | grep -oP 'time=\K[0-9.]+')
-                [[ -z "$lat" ]] && lat="999.9"
-                echo "$lat|$ip|$name|$line" >> "$WORK_DIR/results.txt"
-            fi
-        ) &
-    done < "$WORK_DIR/raw_configs.txt"
-    wait
-
-    echo "LATENCY|IP|NAME|LINK" > "$WORK_DIR/table.txt"
-    sort -n -t '|' -k 1 "$WORK_DIR/results.txt" | awk -F'|' '{printf "%s ms|%s|%s|%s\n", $1, $2, $3, $4}' >> "$WORK_DIR/table.txt"
-
-    SELECTED=$(column -t -s '|' "$WORK_DIR/table.txt" | fzf --header="Select Node (Sorted by Latency)" --with-nth=1,2,3 --layout=reverse)
-}
 
 # --- 4. CONVERT TO JSON & START ---
 start_connection() {
