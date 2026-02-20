@@ -302,6 +302,34 @@ PY
   [[ -z "${SELECTED:-}" ]] && die "No selection made."
 }
 
+
+verify_connection() {
+  echo -e "${BLUE}=== Verifying Connection ===${NC}"
+
+  local DIRECT_IP PROXY_IP
+
+  DIRECT_IP=$(curl -s --max-time 5 https://api.ipify.org || echo "N/A")
+  PROXY_IP=$(curl -s --max-time 8 --proxy socks5h://127.0.0.1:10808 https://api.ipify.org || echo "N/A")
+
+  echo -e "Direct IP : ${YELLOW}${DIRECT_IP}${NC}"
+  echo -e "Proxy  IP : ${CYAN}${PROXY_IP}${NC}"
+
+  if [[ "$PROXY_IP" == "N/A" || -z "$PROXY_IP" ]]; then
+    echo -e "${RED}[x] Proxy test failed. Connection NOT established.${NC}"
+    return 1
+  fi
+
+  if [[ "$DIRECT_IP" == "$PROXY_IP" ]]; then
+    echo -e "${YELLOW}[!] Proxy IP matches direct IP. Likely NOT tunneled.${NC}"
+    return 1
+  fi
+
+  echo -e "${GREEN}[✓] Connection successful. Traffic is routed through Xray.${NC}"
+  return 0
+}
+
+
+
 # --- 4. CONVERT TO XRAY JSON & START (VLESS only) ---
 start_connection() {
   # If JSON mode was used, SELECTED is empty and we already restarted xray.
