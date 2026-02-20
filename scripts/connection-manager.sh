@@ -82,6 +82,8 @@ manage_configs() {
     SELECTED=$(column -t -s '|' "$WORK_DIR/table.txt" | fzf --header="Select the best node (Sorted by Ping)" --with-nth=1,2,3 --layout=reverse)
 }
 
+
+
 # --- 4. CONVERT TO JSON & START ---
 start_connection() {
     [[ -z "$SELECTED" ]] && exit 1
