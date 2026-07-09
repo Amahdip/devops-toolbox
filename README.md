@@ -13,7 +13,7 @@ One command gives you a full server dashboard: pick the modules you want from
 a checklist and get a tiled tmux session with live logs, resource usage,
 Docker management, and network stats.
 
-<!-- TODO: record a demo with `vhs` or asciinema and embed it here -->
+<!-- To generate: run `vhs docs/demo.tape` on a Linux host, then uncomment: -->
 <!-- ![demo](docs/demo.gif) -->
 
 ### Modules
@@ -71,6 +71,10 @@ Handy tmux keys once you're in the session:
 
 Re-running the script while a session exists offers to re-attach instead of
 destroying it.
+
+## Changelog
+
+See [CHANGELOG.md](CHANGELOG.md). Latest: **v0.2.0**.
 
 ## Development
 
